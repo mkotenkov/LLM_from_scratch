@@ -1,0 +1,6 @@
+.venv/
+.venv.3.11/
+data-uncased-1k-100/
+notes/
+.DS_Store
+**/__pycache__/
