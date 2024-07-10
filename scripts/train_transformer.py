@@ -12,7 +12,8 @@ from torch.utils.tensorboard.writer import SummaryWriter
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from modules.data import WikipediaTokenizedDataset
-from modules.transformer import Transformer, TransformerConfig
+from modules.tokenizer import Tokenizer
+from modules.transformer import SamplingStrategy, Transformer, TransformerConfig
 
 
 def parse_args():
@@ -43,10 +44,13 @@ def parse_args():
 
 
 def manage_dirs(ckpts_dir, logs_dir):
+    if os.path.exists(ckpts_dir):
+        shutil.rmtree(ckpts_dir)
+    if os.path.exists(logs_dir):
+        shutil.rmtree(logs_dir)
+
     os.makedirs(ckpts_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
-    shutil.rmtree(logs_dir)
-    shutil.rmtree(ckpts_dir)
 
 
 def save_ckpt(steps, model, optimizer, scheduler, path_to_save):
@@ -81,7 +85,8 @@ def log_gradients(model, sw, step):
 
 
 def log_text_completions(model, sw, step):
-    pass
+    gen = model.generate(ids, 10, SamplingStrategy(), attn_mask=mask)
+    print(*tokenizer.decode_batch(gen), sep="\n")
 
 
 def main(args):
@@ -143,7 +148,7 @@ def main(args):
 
         if step % args.log_every == 0:
             log_gradients(model, sw, step)
-            log_text_completions(model, sw, step)
+        log_text_completions(model, sw, step)
 
         # save
         if step % args.save_every == 0:
@@ -158,4 +163,13 @@ def main(args):
 
 
 if __name__ == "__main__":
+    tokenizer = Tokenizer.init_and_load("/Users/maksimkoltugin/Dev/huawei_LLM_test_task/checkpoints/tokenizer/tokenizer_15k_10k_uncased.pkl")
+
+    list_of_texts = [
+        "What is a piece of text?",
+        "A text is a passage of words that conveys a set of meanings.",
+        "To put it as simply as possible, it is a group of words.",
+    ]
+    ids, mask = tokenizer(list_of_texts)
+
     main(parse_args())

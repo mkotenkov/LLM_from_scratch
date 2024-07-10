@@ -21,11 +21,11 @@ class Tokenizer:
         max_sequence_length = min(max_sequence_length, max_length)
 
         output_tensor = torch.full((len(list_of_token_sequences), max_sequence_length), self.pad_id)
-        attention_mask = torch.zeros((len(list_of_token_sequences), max_sequence_length))
+        attention_mask = torch.zeros((len(list_of_token_sequences), max_sequence_length), dtype=torch.bool)
 
         for i, tokens in enumerate(list_of_token_sequences):
             output_tensor[i, : len(tokens)] = torch.tensor(tokens[:max_sequence_length])
-            attention_mask[i, : len(tokens)] = 1
+            attention_mask[i, : len(tokens)] = True
 
         return output_tensor, attention_mask
 
@@ -41,9 +41,12 @@ class Tokenizer:
             tokens.extend(self._tokenize(p))
         return tokens
 
-    def decode(self, tokens):
-        tokens_bytes = b"".join(self.vocab[token] for token in tokens)
+    def decode(self, tokens, skip_pads=True):
+        tokens_bytes = b"".join(self.vocab[token] if token != self.pad_id or not skip_pads else b"" for token in tokens)
         return tokens_bytes.decode("utf-8", errors="replace")
+
+    def decode_batch(self, tokens_tensor):
+        return [self.decode(tokens.tolist()) for tokens in tokens_tensor]
 
     def train(self, text, n_merges):
         if not self.cased:

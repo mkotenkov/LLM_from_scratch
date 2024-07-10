@@ -97,17 +97,22 @@ class Transformer(nn.Module):
         return loss.mean()
 
     @torch.no_grad()
-    def generate(self, input_ids, new_tokens_number, sampling_strategy, use_cache=True):
+    def generate(self, input_ids, new_tokens_number, sampling_strategy, attn_mask=None, use_cache=True):
         self.eval()
 
-        output = input_ids
+        attn_mask = attn_mask.to(self.device) if attn_mask is not None else None
+        output = input_ids.to(self.device)
+
         for _ in range(new_tokens_number):
-            logits = self(output)
+            logits = self(output, attn_mask=attn_mask)
             logits = logits[:, -1, :]
             new_tokens = self._sample(logits, sampling_strategy)
             output = torch.cat([output, new_tokens], dim=1)
 
-        return output
+            if attn_mask is not None:
+                attn_mask = torch.cat([attn_mask, torch.ones_like(new_tokens, dtype=torch.bool)], dim=1) # type: ignore
+
+        return output.cpu()
 
     def _sample(self, logits, sampling_strategy):
         if not sampling_strategy.do_sample:
