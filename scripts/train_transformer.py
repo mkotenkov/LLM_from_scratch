@@ -1,12 +1,13 @@
 import argparse
 import os
+import shutil
 import sys
 
 from time import time
 
 import torch
 
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -35,10 +36,17 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--save_every", type=int, default=100)
-    parser.add_argument("--log_every", type=int, default=100)
+    parser.add_argument("--log_every", type=int, default=5)
     parser.add_argument("--eval_every", type=int, default=100)
 
     return parser.parse_args()
+
+
+def manage_dirs(ckpts_dir, logs_dir):
+    os.makedirs(ckpts_dir, exist_ok=True)
+    os.makedirs(logs_dir, exist_ok=True)
+    shutil.rmtree(logs_dir)
+    shutil.rmtree(ckpts_dir)
 
 
 def save_ckpt(steps, model, optimizer, scheduler, path_to_save):
@@ -53,6 +61,7 @@ def save_ckpt(steps, model, optimizer, scheduler, path_to_save):
         path_to_save,
     )
 
+
 @torch.no_grad()
 def validate(model, dataloader):
     total_loss = 0
@@ -65,9 +74,18 @@ def validate(model, dataloader):
     return total_loss
 
 
+def log_gradients(model, sw, step):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            sw.add_histogram(f"{name}.grad", param.grad, step)
+
+
+def log_text_completions(model, sw, step):
+    pass
+
+
 def main(args):
-    os.makedirs(args.ckpts_dir, exist_ok=True)
-    os.makedirs(args.logs_dir, exist_ok=True)
+    manage_dirs(args.ckpts_dir, args.logs_dir)
 
     device = torch.device("mps")
 
@@ -120,9 +138,12 @@ def main(args):
 
         # log
         print(f"{step}| {round(loss.item(), 2)}| tps: {tokens_per_second}")
-
         sw.add_scalar("train/loss", loss.item(), step)
         sw.add_scalar("lr", optimizer.param_groups[0]["lr"], step)
+
+        if step % args.log_every == 0:
+            log_gradients(model, sw, step)
+            log_text_completions(model, sw, step)
 
         # save
         if step % args.save_every == 0:
@@ -132,6 +153,8 @@ def main(args):
             break
 
     model.save(os.path.join(args.ckpts_dir, f"model_{step}.pt"))
+
+    sw.close()
 
 
 if __name__ == "__main__":

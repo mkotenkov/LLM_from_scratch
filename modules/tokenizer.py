@@ -14,23 +14,20 @@ class Tokenizer:
         self.vocab = {token: bytes([token]) for token in range(256)}
         self.vocab[self.pad_id] = b"<pad>"
 
-    def __call__(self, list_of_texts, max_length):
-        """Returns tensor with truncated and padded sequences of tokens and padding mask"""
+    def __call__(self, list_of_texts, max_length=512):
+        """Returns tensor with padded and maybe truncated sequences of tokens and padding mask (1s for real tokens, 0s for padding)"""
+        list_of_token_sequences = [self.encode(text) for text in list_of_texts]
+        max_sequence_length = max(len(x) for x in list_of_token_sequences)
+        max_sequence_length = min(max_sequence_length, max_length)
 
-        list_of_token_sequences = []
-        attention_mask = torch.zeros((len(list_of_texts), max_length))
+        output_tensor = torch.full((len(list_of_token_sequences), max_sequence_length), self.pad_id)
+        attention_mask = torch.zeros((len(list_of_token_sequences), max_sequence_length))
 
-        for i, text in enumerate(list_of_texts):
-            tokens = self.encode(text)
-
+        for i, tokens in enumerate(list_of_token_sequences):
+            output_tensor[i, : len(tokens)] = torch.tensor(tokens[:max_sequence_length])
             attention_mask[i, : len(tokens)] = 1
 
-            tokens = tokens[:max_length]
-            tokens.extend([self.pad_id] * (max_length - len(tokens)))
-
-            list_of_token_sequences.append(tokens)
-
-        return torch.tensor(list_of_token_sequences), attention_mask
+        return output_tensor, attention_mask
 
     def encode(self, text):
         """Tokenizes text and returns list of tokens"""

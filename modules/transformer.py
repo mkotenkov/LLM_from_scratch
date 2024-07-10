@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from modules.attention import MultiHeadAttention
 from modules.positional_encoding import PositionalEncoding
@@ -9,12 +10,22 @@ from modules.positional_encoding import PositionalEncoding
 
 @dataclass
 class TransformerConfig:
-    vocab_size: int
-    d_model: int
-    context_length: int
-    n_heads: int
-    n_layers: int
-    p_dropout: float
+    vocab_size: int = 15256
+    d_model: int = 768
+    context_length: int = 512
+    n_heads: int = 12
+    n_layers: int = 12
+    p_dropout: float = 0.1
+
+
+@dataclass
+class SamplingStrategy:
+    do_sample: bool = False
+    num_beams: int = 1
+    temperature: float = 1.0
+    top_k: int = 1
+    top_p: float = 1.0
+    repetition_penalty: float = 1.0
 
 
 class Block(nn.Module):
@@ -40,7 +51,7 @@ class Block(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config=TransformerConfig()):
         super().__init__()
 
         self.config = config
@@ -85,8 +96,24 @@ class Transformer(nn.Module):
 
         return loss.mean()
 
-    def generate(self, prompt, max_length):
-        pass
+    @torch.no_grad()
+    def generate(self, input_ids, new_tokens_number, sampling_strategy, use_cache=True):
+        self.eval()
+
+        output = input_ids
+        for _ in range(new_tokens_number):
+            logits = self(output)
+            logits = logits[:, -1, :]
+            new_tokens = self._sample(logits, sampling_strategy)
+            output = torch.cat([output, new_tokens], dim=1)
+
+        return output
+
+    def _sample(self, logits, sampling_strategy):
+        if not sampling_strategy.do_sample:
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            return torch.multinomial(F.softmax(logits, dim=-1), num_samples=1)
 
     def save(self, path):
         pkg = {
