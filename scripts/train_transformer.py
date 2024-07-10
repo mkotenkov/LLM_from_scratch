@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--save_every", type=int, default=100)
-    parser.add_argument("--log_every", type=int, default=5)
+    parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=100)
 
     return parser.parse_args()
@@ -85,8 +85,8 @@ def log_gradients(model, sw, step):
 
 
 def log_text_completions(model, sw, step):
-    gen = model.generate(ids, 10, SamplingStrategy(), attn_mask=mask)
-    print(*tokenizer.decode_batch(gen), sep="\n")
+    gen = model.generate(ids, 10, SamplingStrategy(do_sample=True), attn_mask=mask)
+    sw.add_text("text_completions", "\n".join(tokenizer.decode_batch(gen)), step)
 
 
 def main(args):
@@ -111,8 +111,16 @@ def main(args):
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False)  # type: ignore
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)  # type: ignore
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, total_steps=args.steps)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95))
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[
+            torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1e-5, end_factor=1.0, total_iters=args.steps // 10),
+            torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.steps),
+        ],
+        milestones=[args.steps // 10],
+    )
+
 
     sw = SummaryWriter(args.logs_dir)
 
@@ -129,6 +137,7 @@ def main(args):
         optimizer.zero_grad()
         loss = model.compute_loss(x, y, attn_mask)
         loss.backward()
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         scheduler.step()
 
@@ -142,13 +151,13 @@ def main(args):
             sw.add_scalar("val/loss", validation_loss, step)
 
         # log
-        print(f"{step}| {round(loss.item(), 2)}| tps: {tokens_per_second}")
+        print(f"{step}| {loss.item():2f}| tps: {tokens_per_second}| norm: {norm:2f}")
         sw.add_scalar("train/loss", loss.item(), step)
         sw.add_scalar("lr", optimizer.param_groups[0]["lr"], step)
 
         if step % args.log_every == 0:
             log_gradients(model, sw, step)
-        log_text_completions(model, sw, step)
+            log_text_completions(model, sw, step)
 
         # save
         if step % args.save_every == 0:

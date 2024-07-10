@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 
 import torch
 import torch.nn as nn
@@ -67,6 +68,16 @@ class Transformer(nn.Module):
         # weight sharing
         self.token_embedding_table.weight = self.out_projection.weight
 
+        # initialize parameters so that activations would have same std across layers
+        for i, block in enumerate(self.blocks, start=1):
+            std = 0.02 / math.sqrt(2 * i)
+            for module in block.modules():
+                if isinstance(module, nn.Linear):
+                    torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+                    if module.bias is not None:
+                        torch.nn.init.constant_(module.bias, 0)
+        torch.nn.init.normal_(self.token_embedding_table.weight, mean=0.0, std=0.02)
+
     @property
     def device(self):
         return next(self.parameters()).device
@@ -75,8 +86,9 @@ class Transformer(nn.Module):
         x = self.token_embedding_table(x)
         x = self.positional_encoding(x)
 
-        for block in self.blocks:
+        for i, block in enumerate(self.blocks):
             x = block(x, attn_mask=attn_mask)
+            print(f"Block {i} std: {torch.std(x)}")
 
         x = self.ln(x)
         x = self.out_projection(x)
@@ -110,7 +122,7 @@ class Transformer(nn.Module):
             output = torch.cat([output, new_tokens], dim=1)
 
             if attn_mask is not None:
-                attn_mask = torch.cat([attn_mask, torch.ones_like(new_tokens, dtype=torch.bool)], dim=1) # type: ignore
+                attn_mask = torch.cat([attn_mask, torch.ones_like(new_tokens, dtype=torch.bool)], dim=1)  # type: ignore
 
         return output.cpu()
 
@@ -118,7 +130,16 @@ class Transformer(nn.Module):
         if not sampling_strategy.do_sample:
             return torch.argmax(logits, dim=-1, keepdim=True)
         else:
-            return torch.multinomial(F.softmax(logits, dim=-1), num_samples=1)
+            probs = F.softmax(logits, dim=-1)
+            # do top-k sampling of 50 (huggingface pipeline default)
+            # topk_probs here becomes (5, 50), topk_indices is (5, 50)
+            topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+            # select a token from the top-k probabilities
+            # note: multinomial does not demand the input to sum to 1
+            ix = torch.multinomial(topk_probs, 1)  # (B, 1)
+            # gather the corresponding indices
+            xcol = torch.gather(topk_indices, -1, ix)  # (B, 1)
+            return xcol
 
     def save(self, path):
         pkg = {
