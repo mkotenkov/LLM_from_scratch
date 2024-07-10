@@ -51,7 +51,7 @@ class Transformer(nn.Module):
         self.ln = nn.LayerNorm(config.d_model)
         self.out_projection = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-        self.loss_fn = nn.CrossEntropyLoss(reduction='none')
+        self.loss_fn = nn.CrossEntropyLoss(reduction="none")
 
         # weight sharing
         self.token_embedding_table.weight = self.out_projection.weight
@@ -66,14 +66,14 @@ class Transformer(nn.Module):
 
         for block in self.blocks:
             x = block(x, attn_mask=attn_mask)
-        
+
         x = self.ln(x)
         x = self.out_projection(x)
         return x
 
     def compute_loss(self, x, y, attn_mask=None):
         logits = self(x, attn_mask=attn_mask)
-        logits_flat =logits.view(-1, logits.shape[-1])
+        logits_flat = logits.view(-1, logits.shape[-1])
 
         y_flat = y.view(-1)
 
@@ -84,6 +84,20 @@ class Transformer(nn.Module):
             loss = loss.masked_select(attn_mask_flat)
 
         return loss.mean()
-    
+
     def generate(self, prompt, max_length):
         pass
+
+    def save(self, path):
+        pkg = dict(
+            config=self.config,
+            state_dict=self.state_dict(),
+        )
+        torch.save(pkg, path)
+
+    @classmethod
+    def init_and_load(cls, path):
+        pkg = torch.load(path)
+        model = cls(pkg["config"])
+        model.load_state_dict(pkg["state_dict"])
+        return model
