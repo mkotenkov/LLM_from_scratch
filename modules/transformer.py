@@ -89,15 +89,15 @@ class Transformer(nn.Module):
         pass
 
     def save(self, path):
-        pkg = dict(
-            config=self.config,
-            state_dict=self.state_dict(),
-        )
+        pkg = {
+            "config": self.config,
+            "model_state_dict": self.state_dict(),
+        }
         torch.save(pkg, path)
 
     @classmethod
     def init_and_load(cls, path):
         pkg = torch.load(path)
         model = cls(pkg["config"])
-        model.load_state_dict(pkg["state_dict"])
+        model.load_state_dict(pkg["model_state_dict"])
         return model
