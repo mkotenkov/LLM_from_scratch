@@ -16,6 +16,8 @@ from modules.transformer import Transformer, TransformerConfig
 
 def parse_args():
     parser = argparse.ArgumentParser()
+
+    # directories
     parser.add_argument("--dataset_base_dir", type=str, required=True)
     parser.add_argument("--ckpts_dir", type=str, required=True)
     parser.add_argument("--logs_dir", type=str, required=True)
@@ -33,6 +35,9 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--save_every", type=int, default=100)
+    parser.add_argument("--log_every", type=int, default=100)
+    parser.add_argument("--eval_every", type=int, default=100)
+
     return parser.parse_args()
 
 
@@ -47,6 +52,18 @@ def save_ckpt(steps, model, optimizer, scheduler, path_to_save):
         },
         path_to_save,
     )
+
+@torch.no_grad()
+def validate(model, dataloader):
+    total_loss = 0
+    for batch in dataloader:
+        x = batch["x"].to(model.device)
+        y = batch["y"].to(model.device)
+        attn_mask = batch["pad_mask"].to(model.device)
+        loss = model.compute_loss(x, y, attn_mask)
+        total_loss += loss.item() / len(dataloader)
+    return total_loss
+
 
 def main(args):
     os.makedirs(args.ckpts_dir, exist_ok=True)
@@ -85,6 +102,7 @@ def main(args):
         attn_mask = batch["pad_mask"].to(device)
 
         # train
+        model.train()
         optimizer.zero_grad()
         loss = model.compute_loss(x, y, attn_mask)
         loss.backward()
@@ -93,6 +111,12 @@ def main(args):
 
         t1 = time()
         tokens_per_second = (args.batch_size * args.context_length) / (t1 - t0)
+
+        # validate
+        if step % args.eval_every == 0:
+            model.eval()
+            validation_loss = validate(model, test_dataloader)
+            sw.add_scalar("val/loss", validation_loss, step)
 
         # log
         print(f"{step}| {round(loss.item(), 2)}| tps: {tokens_per_second}")
