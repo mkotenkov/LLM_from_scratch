@@ -35,7 +35,7 @@ def parse_args():
     # training config
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=6e-4)
     parser.add_argument("--save_every", type=int, default=100)
     parser.add_argument("--log_every", type=int, default=10)
     parser.add_argument("--eval_every", type=int, default=100)
@@ -111,7 +111,14 @@ def main(args):
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False)  # type: ignore
     test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)  # type: ignore
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95))
+    decay_params = [p for n, p in model.named_parameters() if not any(nd in n for nd in ["norm", "bias", "ln", "layernorm"])]
+    no_decay_params = [p for n, p in model.named_parameters() if any(nd in n for nd in ["norm", "bias", "ln", "layernorm"])]
+    optimizer_grouped_parameters = [
+        {"params": decay_params, "weight_decay": 0.1},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.lr, betas=(0.9, 0.95))
+
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer,
         schedulers=[
@@ -120,7 +127,6 @@ def main(args):
         ],
         milestones=[args.steps // 10],
     )
-
 
     sw = SummaryWriter(args.logs_dir)
 
