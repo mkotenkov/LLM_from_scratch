@@ -88,7 +88,7 @@ class Transformer(nn.Module):
 
         for i, block in enumerate(self.blocks):
             x = block(x, attn_mask=attn_mask)
-            print(f"Block {i} std: {torch.std(x)}")
+            # print(f"Block {i} std: {torch.std(x)}")
 
         x = self.ln(x)
         x = self.out_projection(x)
