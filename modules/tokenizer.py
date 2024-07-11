@@ -92,6 +92,7 @@ class Tokenizer:
                 print("\033[41m" + p + "\033[0m", end="")
             else:
                 print("\033[44m" + p + "\033[0m", end="")
+        print()
 
     def _tokenize(self, text):
         byte_sequence = list(text.encode("utf-8"))

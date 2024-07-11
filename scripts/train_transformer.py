@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from modules.data import WikipediaTokenizedDataset
 from modules.tokenizer import Tokenizer
-from modules.transformer import SamplingStrategy, Transformer, TransformerConfig
+from modules.transformer import Transformer, TransformerConfig
 
 
 def parse_args():
@@ -43,6 +43,7 @@ def parse_args():
     parser.add_argument("--eval_every", type=int, default=200)
     parser.add_argument("--grad_accum_start", type=int, default=2)
     parser.add_argument("--grad_accum_end", type=int, default=16)
+    parser.add_argument("--cuda_idx", type=int, default=0)
 
     return parser.parse_args()
 
@@ -86,7 +87,7 @@ def validate(model, dataloader):
 
 
 def log_text_completions(model, tokenizer, ids, mask, sw, step):
-    gen = model.generate(ids, 10, SamplingStrategy(do_sample=True), attn_mask=mask)
+    gen = model.generate(ids, 10, attn_mask=mask)
     sw.add_text("text_completions", "\n".join(tokenizer.decode_batch(gen)), step)
     print("\n".join(tokenizer.decode_batch(gen)))
 
@@ -115,8 +116,11 @@ def main(args):
             p_dropout=args.p_dropout,
         )
     )
-    device = "cuda:1"
-    model = torch.compile(model).to(device)
+
+    device = torch.device(f"cuda:{args.cuda_idx}")
+    
+    # model = torch.compile(model).to(device)
+    model = model.to(device)
 
     train_dataset = WikipediaTokenizedDataset(os.path.join(args.dataset_base_dir, "train"))
     test_dataset = WikipediaTokenizedDataset(os.path.join(args.dataset_base_dir, "test"))
@@ -164,7 +168,7 @@ def main(args):
             # calc loss
             with torch.cuda.amp.autocast():
                 loss = model.compute_loss(x, y, attn_mask) / grad_accum
-                loss_accum += loss.detach()
+                loss_accum += loss.item()
                 scaler.scale(loss).backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -179,7 +183,7 @@ def main(args):
         tokens_per_second = tokens_processed / dt
 
         # log
-        print(f"{step}| {loss_accum.item():2f}| tps: {tokens_per_second}| grad_accum: {grad_accum}| time_elapsed: {dt:2f}| tokens_processed: {tokens_processed}")
+        print(f"{step}| {loss_accum:2f}| tps: {tokens_per_second}| grad_accum: {grad_accum}| time_elapsed: {dt:2f}| tokens_processed: {tokens_processed}")
         sw.add_scalar("train/loss", loss.item() * grad_accum, step)
         sw.add_scalar("lr", optimizer.param_groups[0]["lr"], step)
 

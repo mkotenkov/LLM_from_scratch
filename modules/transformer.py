@@ -1,5 +1,7 @@
-from dataclasses import dataclass
 import math
+
+from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -21,11 +23,10 @@ class TransformerConfig:
 
 @dataclass
 class SamplingStrategy:
-    do_sample: bool = False
-    num_beams: int = 1
+    greedy: bool = False
     temperature: float = 1.0
-    top_k: int = 1
-    top_p: float = 1.0
+    top_k: Optional[int] = 50
+    top_p: Optional[float] = None
     repetition_penalty: float = 1.0
 
 
@@ -66,7 +67,7 @@ class Transformer(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss(reduction="none")
 
         # weight sharing
-        # self.token_embedding_table.weight = self.out_projection.weight
+        self.token_embedding_table.weight = self.out_projection.weight
 
         # initialize parameters so that activations would have same std across layers
         for i, block in enumerate(self.blocks, start=1):
@@ -88,7 +89,6 @@ class Transformer(nn.Module):
 
         for i, block in enumerate(self.blocks):
             x = block(x, attn_mask=attn_mask)
-            # print(f"Block {i} std: {torch.std(x)}")
 
         x = self.ln(x)
         x = self.out_projection(x)
@@ -108,39 +108,6 @@ class Transformer(nn.Module):
 
         return loss.mean()
 
-    @torch.no_grad()
-    def generate(self, input_ids, new_tokens_number, sampling_strategy, attn_mask=None, use_cache=True):
-        self.eval()
-
-        attn_mask = attn_mask.to(self.device) if attn_mask is not None else None
-        output = input_ids.to(self.device)
-
-        for _ in range(new_tokens_number):
-            logits = self(output, attn_mask=attn_mask)
-            logits = logits[:, -1, :]
-            new_tokens = self._sample(logits, sampling_strategy)
-            output = torch.cat([output, new_tokens], dim=1)
-
-            if attn_mask is not None:
-                attn_mask = torch.cat([attn_mask, torch.ones_like(new_tokens, dtype=torch.bool)], dim=1)  # type: ignore
-
-        return output.cpu()
-
-    def _sample(self, logits, sampling_strategy):
-        if not sampling_strategy.do_sample:
-            return torch.argmax(logits, dim=-1, keepdim=True)
-        else:
-            probs = F.softmax(logits, dim=-1)
-            # do top-k sampling of 50 (huggingface pipeline default)
-            # topk_probs here becomes (5, 50), topk_indices is (5, 50)
-            topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-            # select a token from the top-k probabilities
-            # note: multinomial does not demand the input to sum to 1
-            ix = torch.multinomial(topk_probs, 1)  # (B, 1)
-            # gather the corresponding indices
-            xcol = torch.gather(topk_indices, -1, ix)  # (B, 1)
-            return xcol
-
     def save(self, path):
         pkg = {
             "config": self.config,
@@ -154,3 +121,66 @@ class Transformer(nn.Module):
         model = cls(pkg["config"])
         model.load_state_dict(pkg["model_state_dict"])
         return model
+
+    @torch.no_grad()
+    def generate(self, input_ids, new_tokens_number, sampling_strategy=SamplingStrategy(), attn_mask=None, use_cache=True):
+        self.eval()
+
+        attn_mask = attn_mask.to(self.device) if attn_mask is not None else None
+        output = input_ids.to(self.device)
+
+        for _ in range(new_tokens_number):
+            logits = self(output, attn_mask=attn_mask)
+            logits = logits[:, -1, :]
+            new_tokens = self._sample(logits, sampling_strategy, generated_tokens=output)
+            output = torch.cat([output, new_tokens], dim=1)
+
+            if attn_mask is not None:
+                attn_mask = torch.cat([attn_mask, torch.ones_like(new_tokens, dtype=torch.bool)], dim=1)
+
+        return output.cpu()
+
+    def _sample(self, logits, sampling_strategy, generated_tokens):
+        if sampling_strategy.greedy:
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+
+            # Check if both top_k and top_p are specified
+            if sampling_strategy.top_k is not None and sampling_strategy.top_p is not None:
+                raise ValueError("Both top_k and top_p cannot be used simultaneously.")
+
+            # Apply top-k filtering if specified
+            if sampling_strategy.top_k is not None:
+                indices_to_remove = logits < torch.topk(logits, sampling_strategy.top_k, dim=1)[0][..., -1, None]
+                logits[indices_to_remove] = float("-inf")
+
+            # Apply top-p filtering if specified
+            if sampling_strategy.top_p is not None:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+                # Remove tokens with cumulative probability above the threshold
+                sorted_indices_to_remove = cumulative_probs > sampling_strategy.top_p
+
+                # Shift the indices to the right to keep also the first token above the threshold
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+
+                # Replace logits to be removed with -inf in the sorted_logits
+                sorted_logits[sorted_indices_to_remove] = float("-inf")
+
+                # Then reverse the sorting process by mapping back sorted_logits to their original position
+                logits = torch.gather(sorted_logits, 1, sorted_indices.argsort(-1))
+
+            # Apply repetition_penalty if not default
+            if sampling_strategy.repetition_penalty != 1.0:
+                for i in range(logits.shape[0]):
+                    sequence_tokens = generated_tokens[i]
+                    for token_id in sequence_tokens:
+                        if token_id > 0:  # Ignore padding
+                            logits[i, token_id] /= sampling_strategy.repetition_penalty
+
+            logits = logits / sampling_strategy.temperature
+            probs = F.softmax(logits, dim=-1)
+            ix = torch.multinomial(probs, 1)
+            return ix
