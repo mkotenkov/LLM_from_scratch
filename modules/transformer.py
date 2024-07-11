@@ -21,15 +21,6 @@ class TransformerConfig:
     p_dropout: float = 0.1
 
 
-@dataclass
-class SamplingStrategy:
-    greedy: bool = False
-    temperature: float = 1.0
-    top_k: Optional[int] = 50
-    top_p: Optional[float] = None
-    repetition_penalty: float = 1.0
-
-
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -123,7 +114,7 @@ class Transformer(nn.Module):
         return model
 
     @torch.no_grad()
-    def generate(self, input_ids, new_tokens_number, sampling_strategy=SamplingStrategy(), attn_mask=None, use_cache=True):
+    def generate(self, input_ids, new_tokens_number, attn_mask=None, **kwargs):
         self.eval()
 
         attn_mask = attn_mask.to(self.device) if attn_mask is not None else None
@@ -132,7 +123,7 @@ class Transformer(nn.Module):
         for _ in range(new_tokens_number):
             logits = self(output, attn_mask=attn_mask)
             logits = logits[:, -1, :]
-            new_tokens = self._sample(logits, sampling_strategy, generated_tokens=output)
+            new_tokens = self._sample(logits, generated_tokens=output, **kwargs)
             output = torch.cat([output, new_tokens], dim=1)
 
             if attn_mask is not None:
@@ -140,27 +131,37 @@ class Transformer(nn.Module):
 
         return output.cpu()
 
-    def _sample(self, logits, sampling_strategy, generated_tokens):
-        if sampling_strategy.greedy:
+
+    def _sample(
+        self,
+        logits,
+        generated_tokens,
+        greedy=False,
+        temperature=1.0,
+        top_k=50,
+        top_p=None,
+        repetition_penalty=1.0,
+    ):
+        if greedy:
             return torch.argmax(logits, dim=-1, keepdim=True)
         else:
 
             # Check if both top_k and top_p are specified
-            if sampling_strategy.top_k is not None and sampling_strategy.top_p is not None:
+            if top_k is not None and top_p is not None:
                 raise ValueError("Both top_k and top_p cannot be used simultaneously.")
 
             # Apply top-k filtering if specified
-            if sampling_strategy.top_k is not None:
-                indices_to_remove = logits < torch.topk(logits, sampling_strategy.top_k, dim=1)[0][..., -1, None]
+            if top_k is not None:
+                indices_to_remove = logits < torch.topk(logits, top_k, dim=1)[0][..., -1, None]
                 logits[indices_to_remove] = float("-inf")
 
             # Apply top-p filtering if specified
-            if sampling_strategy.top_p is not None:
+            if top_p is not None:
                 sorted_logits, sorted_indices = torch.sort(logits, descending=True)
                 cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
 
                 # Remove tokens with cumulative probability above the threshold
-                sorted_indices_to_remove = cumulative_probs > sampling_strategy.top_p
+                sorted_indices_to_remove = cumulative_probs > top_p
 
                 # Shift the indices to the right to keep also the first token above the threshold
                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
@@ -173,14 +174,14 @@ class Transformer(nn.Module):
                 logits = torch.gather(sorted_logits, 1, sorted_indices.argsort(-1))
 
             # Apply repetition_penalty if not default
-            if sampling_strategy.repetition_penalty != 1.0:
+            if repetition_penalty != 1.0:
                 for i in range(logits.shape[0]):
                     sequence_tokens = generated_tokens[i]
                     for token_id in sequence_tokens:
                         if token_id > 0:  # Ignore padding
-                            logits[i, token_id] /= sampling_strategy.repetition_penalty
+                            logits[i, token_id] /= repetition_penalty
 
-            logits = logits / sampling_strategy.temperature
+            logits = logits / temperature
             probs = F.softmax(logits, dim=-1)
             ix = torch.multinomial(probs, 1)
             return ix
