@@ -66,7 +66,7 @@ class Transformer(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss(reduction="none")
 
         # weight sharing
-        self.token_embedding_table.weight = self.out_projection.weight
+        # self.token_embedding_table.weight = self.out_projection.weight
 
         # initialize parameters so that activations would have same std across layers
         for i, block in enumerate(self.blocks, start=1):

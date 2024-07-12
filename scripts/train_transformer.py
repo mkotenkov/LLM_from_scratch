@@ -35,14 +35,14 @@ def parse_args():
     parser.add_argument("--p_dropout", type=float, default=0.1)
 
     # training config
-    parser.add_argument("--steps", type=int, default=5_000)  # 5000
+    parser.add_argument("--steps", type=int, default=2_000)  # 5000
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=6e-4)
     parser.add_argument("--save_every", type=int, default=200)
     parser.add_argument("--log_every", type=int, default=100)
     parser.add_argument("--eval_every", type=int, default=200)
     parser.add_argument("--grad_accum_start", type=int, default=2)
-    parser.add_argument("--grad_accum_end", type=int, default=32)
+    parser.add_argument("--grad_accum_end", type=int, default=16)
 
     return parser.parse_args()
 
@@ -115,7 +115,7 @@ def main(args):
             p_dropout=args.p_dropout,
         )
     )
-    device = "cuda:0"
+    device = "cuda:1"
     model = torch.compile(model).to(device)
 
     train_dataset = WikipediaTokenizedDataset(os.path.join(args.dataset_base_dir, "train"))
