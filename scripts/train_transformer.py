@@ -125,7 +125,14 @@ def main(args):
     train_dataloader = iter(train_dataloader)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)  # type: ignore
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.1)
+    decay_params = [p for n, p in model.named_parameters() if not any(nd in n for nd in ["norm", "bias", "ln", "layernorm"])]
+    no_decay_params = [p for n, p in model.named_parameters() if any(nd in n for nd in ["norm", "bias", "ln", "layernorm"])]
+    optimizer_grouped_parameters = [
+        {"params": decay_params, "weight_decay": 0.1},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.lr, betas=(0.9, 0.95))
+
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer,
         schedulers=[
