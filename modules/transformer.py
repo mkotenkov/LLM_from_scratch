@@ -108,7 +108,7 @@ class Transformer(nn.Module):
 
     @classmethod
     def init_and_load(cls, path):
-        pkg = torch.load(path)
+        pkg = torch.load(path, map_location="cpu")
         model = cls(pkg["config"])
         model.load_state_dict(pkg["model_state_dict"])
         return model
